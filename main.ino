@@ -1,35 +1,38 @@
 #include <WiFi.h>
 #include <Wire.h>
 
-#define SIMULATION_MODE
+#define SIMULATION_MODE_IMAGE
+//#define SIMULATION_MODE_SENSOR
 // #define SEND_IFTTT_PKG
 #define PROCESS_IMG_CORE0
 #define PROCESS_SENSOR_CORE1
 //#define WOKWI_ENV
 
-#ifndef SIMULATION_MODE
+#ifndef SIMULATION_MODE_SENSOR
 #include "DHTesp.h"
 #endif
 
+// WiFi status
 #ifdef WOKWI_ENV
 #define WLAN_SSID "Wokwi-GUEST"
 #define WLAN_PSWD ""
 #else
-#define WLAN_SSID "JumiWifi"
-#define WLAN_PSWD "93992032587598973862"
+#define WLAN_SSID ""
+#define WLAN_PSWD ""
 #endif
 
+// Weather forecast
 #define RAIN_PREDICTION
- 
 #define AIR_PRESSURE  950
 #define CITY_ALTITUDE 520
- 
+
+// Times
 #define TARGET_TIMESTAMP 10
-#define DELAY_SEC        2
- 
+#define DELAY_SEC        10
 #define RETRIES   5
 #define DAILY_CNT 24
- 
+
+// Status definition
 #define IOT_STATUS int
 #define IOT_SUCCESS 0
 #define IOT_SERVER_ERR -1
@@ -43,7 +46,27 @@ TaskHandle_t sensorsCore;
 #ifdef PROCESS_IMG_CORE0
 TaskHandle_t imageCore;
 #endif
- 
+
+// Image definition
+#define IMG_WIDTH  100
+#define IMG_HEIGHT 100
+#ifdef SIMULATION_MODE_IMAGE
+char img_data[IMG_HEIGHT * IMG_WIDTH];
+#else
+char* img_data;
+#endif
+#define IMG_INFO_THRESHOLD 25
+#define IMG_PIXEL_THRESHOLD 50
+struct iot_image
+{
+  int width;
+  int height;
+  int format;
+  int valid; // 0 = false, !0 = true
+  char* img_data;
+};
+struct iot_image iot_img;
+
 struct wifi_data
 {
   const char* ssid     = WLAN_SSID;
@@ -60,12 +83,7 @@ struct ifttt_data
 // IFTTT resource
 struct ifttt_data ifttt;
  
-// Time to sleep
-uint64_t uS_TO_S_FACTOR = 1000000; // Conversion factor for micro seconds to seconds
-// sleep for 30 minutes = 1800 seconds
-uint64_t TIME_TO_SLEEP = 1;
-
-#ifndef SIMULATION_MODE
+#ifndef SIMULATION_MODE_SENSOR
 const int DHT_PIN = 15;
 #endif
  
@@ -85,9 +103,10 @@ struct daily_data
   int    tempRaw[DAILY_CNT];
   int    humidityRaw[DAILY_CNT];
   String rainPrediction;
+  struct iot_image* img; 
 };
 
-#ifndef SIMULATION_MODE
+#ifndef SIMULATION_MODE_SENSOR
 struct sensors
 {
   DHTesp dhtSensor;
@@ -107,7 +126,7 @@ void setup()
       Serial.println("Error occured during WIFI connection");
       Serial.println("########");
   };
-#ifndef SIMULATION_MODE
+#ifndef SIMULATION_MODE_SENSOR
   // Sensors setup
   if (IOT_SUCCESS == status)
   {
@@ -115,6 +134,10 @@ void setup()
   }
 #endif
 
+  dailyData.img = &iot_img;
+#ifdef SIMULATION_MODE_IMAGE
+  memset(&img_data, 100, IMG_WIDTH * IMG_HEIGHT);
+#endif
   Serial.println("Setup...Success");
  
   // Cores init
@@ -170,11 +193,21 @@ void SensorsCoreLoop( void * parameter)
  
 void ImageCoreLoop( void * parameter)
 {
+    IOT_STATUS status = IOT_SUCCESS;
+    
     while(1)
     {
       // Core sanity check
       Serial.print("ImageCoreLoop() running on core ");
       Serial.println(xPortGetCoreID());
+      
+      status = runImageProcessing();
+      if (IOT_SUCCESS != status)
+      {
+        Serial.print("runImageProcessing() problem ... sleeping");
+        delay(3000);
+      }
+      
       delay(2000);
     }
   Serial.println("ImageCoreLoop() ending...");
@@ -189,7 +222,62 @@ void loop()
   runSensorsProcessing();
 #endif
 }
- 
+
+IOT_STATUS runImageProcessing()
+{
+  IOT_STATUS status = IOT_SUCCESS;
+  int quantity;
+  // Open image
+  iot_img.height = IMG_HEIGHT;
+  iot_img.width = IMG_WIDTH;
+#ifdef SIMULATION_MODE_IMAGE
+  iot_img.img_data = (char*) img_data;
+#else
+  //TODO: read image from disk
+
+#endif
+  // Process - information quantity
+  status = imageInformationQuantity(iot_img, &quantity);
+
+  if (IOT_SUCCESS == status)
+  {
+    if (quantity < IMG_INFO_THRESHOLD)
+    {
+      Serial.println("Image OBSTRUCTED");
+      iot_img.valid = 0;
+    }
+    else
+    {
+      Serial.println("Image OK");
+      iot_img.valid = 1;
+    }
+  }
+  
+  return status;
+}
+
+IOT_STATUS imageInformationQuantity(struct iot_image img, int* quantity)
+{
+    IOT_STATUS status = IOT_SUCCESS;
+    *quantity = 0;
+    // TODO: image format?
+    // TODO: covert all image formats to Y only
+    int channels = 1;
+    int total_info = img.height * img.width * channels;
+    int black_info = 0;
+    int i, j;
+    for (int i = 0; i < img.height; i++)
+    {
+      for (int j = 0; j < img.width; j++)
+      {
+        int current_pixel = img.img_data[i * img.width + j];
+        black_info = (current_pixel < IMG_PIXEL_THRESHOLD) ? (black_info + 1) : black_info;
+      }
+    }
+    *quantity = (float)(total_info - black_info) / total_info * 100;
+    return status;
+}
+
 IOT_STATUS runSensorsProcessing()
 {  
   IOT_STATUS status = IOT_SUCCESS;
@@ -355,18 +443,14 @@ IOT_STATUS rainPrediction(void *daily)
   return status;
 }
  
-#ifdef SIMULATION_MODE
+#ifdef SIMULATION_MODE_SENSOR
 IOT_STATUS getDHTSensorData(void *daily)
 {
   struct daily_data* data = (struct daily_data*) daily;
  
   data->temp.current = 24;
   data->humidity.current = 40;
-  int tempCurrent = 24;
-  int humidityCurrent = 40; 
-   Serial.println("Temp: " + String(tempCurrent, 2) + "°C");
-  Serial.println("Humidity: " + String(humidityCurrent, 1) + "%");
-  Serial.println("+++");
+  
   return IOT_SUCCESS;
 }
 #else
@@ -384,8 +468,8 @@ IOT_STATUS getDHTSensorData(void *daily)
 void printDHTSensorData(void *daily)
 {
   struct daily_data* data = (struct daily_data*) daily;
-  Serial.println("Temp: " + String(data->temp.current, 2) + "°C");
-  Serial.println("Humidity: " + String(data->humidity.current, 1) + "%");
+  Serial.println("Temp: " + String(data->temp.current) + "°C");
+  Serial.println("Humidity: " + String(data->humidity.current) + "%");
   Serial.println("---");
 }
  
@@ -399,6 +483,14 @@ IOT_STATUS makeIFTTTRequest(void *daily)
   current = String(data->temp.current, 2) + "°C; " + String(data->humidity.current, 1) + "%";
   yesterday = String(data->temp.prevAvg, 2) + "°C; " + String(data->humidity.prevAvg, 1) + "%";
   forecast = data->rainPrediction;
+  if (0 == iot_img.valid)
+  {
+    forecast = forecast + "....Image OBSTRUCTED";
+  }
+  else
+  {
+    forecast = forecast + "....Image OK";
+  }
   // Temperature in Celsius
   String jsonObject = String("{\"value1\":\"") + current + "\",\"value2\":\""
                       + yesterday + "\",\"value3\":\"" + forecast + "\"}";
