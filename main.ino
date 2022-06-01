@@ -77,7 +77,7 @@ struct wifi_data wifi;
  
 struct ifttt_data
 {
-  const char* resource = "/trigger/garden_dwarf_trigger/with/key/lZ44wiIR-3LIjEYrnmqgqUEIvlh9XDqyxh5MulgpYEb";
+  const char* resource = "";
   const char* server = "maker.ifttt.com";
 };
 // IFTTT resource
