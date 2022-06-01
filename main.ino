@@ -3,13 +3,16 @@
 
 #define SIMULATION_MODE_IMAGE
 //#define SIMULATION_MODE_SENSOR
-// #define SEND_IFTTT_PKG
+#define SEND_IFTTT_PKG
 #define PROCESS_IMG_CORE0
 #define PROCESS_SENSOR_CORE1
 //#define WOKWI_ENV
 
 #ifndef SIMULATION_MODE_SENSOR
-#include "DHTesp.h"
+#include "DHT.h"
+#define DHTPIN 4
+#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
+DHT dht(DHTPIN, DHTTYPE);
 #endif
 
 // WiFi status
@@ -83,10 +86,6 @@ struct ifttt_data
 // IFTTT resource
 struct ifttt_data ifttt;
  
-#ifndef SIMULATION_MODE_SENSOR
-const int DHT_PIN = 15;
-#endif
- 
 int count_daily = 0;
 struct measurements
 {
@@ -107,11 +106,11 @@ struct daily_data
 };
 
 #ifndef SIMULATION_MODE_SENSOR
-struct sensors
-{
-  DHTesp dhtSensor;
-};
-struct sensors availSensors;
+//struct sensors
+//{
+//  DHT dhtSensor;
+//};
+//struct sensors availSensors;
 #endif
 
 struct daily_data dailyData;
@@ -130,7 +129,8 @@ void setup()
   // Sensors setup
   if (IOT_SUCCESS == status)
   {
-    availSensors.dhtSensor.setup(DHT_PIN, DHTesp::DHT22);
+    //availSensors.dhtSensor.setup(DHT_PIN, DHTesp::DHT22);
+    dht.begin();
   }
 #endif
 
@@ -194,7 +194,7 @@ void SensorsCoreLoop( void * parameter)
 void ImageCoreLoop( void * parameter)
 {
     IOT_STATUS status = IOT_SUCCESS;
-    
+    delay(2000);
     while(1)
     {
       // Core sanity check
@@ -448,8 +448,8 @@ IOT_STATUS getDHTSensorData(void *daily)
 {
   struct daily_data* data = (struct daily_data*) daily;
  
-  data->temp.current = 24;
-  data->humidity.current = 40;
+  data->temp.current = 25;
+  data->humidity.current = 70;
   
   return IOT_SUCCESS;
 }
@@ -458,8 +458,11 @@ IOT_STATUS getDHTSensorData(void *daily)
 {
   struct daily_data* data = (struct daily_data*) daily;
  
-  data->temp.current = availSensors.dhtSensor.getTempAndHumidity().temperature;
-  data->humidity.current = availSensors.dhtSensor.getTempAndHumidity().humidity;
+  //data->temp.current = availSensors.dhtSensor.getTempAndHumidity().temperature;
+  data->temp.current = dht.readTemperature();
+
+  //data->humidity.current = availSensors.dhtSensor.getTempAndHumidity().humidity;
+  data->humidity.current = dht.readHumidity();
   
   return IOT_SUCCESS;
 }
